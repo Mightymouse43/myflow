@@ -1,0 +1,39 @@
+[project]
+name = "voz"
+version = "0.1.0"
+description = "MyFlow: local, free, hold-to-talk dictation for the Mac. Talk, release, clean text lands at the cursor."
+requires-python = ">=3.12"
+dependencies = [
+  "mlx-whisper",
+  "parakeet-mlx",
+  "sounddevice",
+  "numpy",
+  "rapidfuzz",
+  "jellyfish",
+  "rumps",
+  "pyobjc-framework-Cocoa",
+  "pyobjc-framework-Quartz",
+  "pyobjc-framework-ApplicationServices",
+]
+
+[project.optional-dependencies]
+polish = ["mlx-lm"]
+dev = ["pytest"]
+
+[project.scripts]
+voz = "voz.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["voz"]
+
+[tool.setuptools.package-data]
+voz = ["assets/*.png"]
+
+[tool.pytest.ini_options]
+markers = ["slow: needs the speech models (minutes, downloads)"]
+addopts = "-m 'not slow'"
+filterwarnings = ["ignore:Setting the shape on a NumPy array:DeprecationWarning:sounddevice"]

@@ -37,28 +37,39 @@ _COMPACT = ("listening", "thinking", "done")   # mark + bars only; done is a sho
 _WEIGHTS = (0.55, 0.80, 1.00, 0.80, 0.55)    # centre bar tallest
 _DECAY = (0.80, 0.72, 0.60, 0.72, 0.80)      # per tick; outer bars linger a touch so they do not move in lockstep
 _ATTACK = 0.45
+REF_FLOOR_DB = -40.0                         # the quietest reference the bars calibrate to: a MacBook mic at a low input volume
+WINDOW_DB = 24.0                             # the bars span the 24 dB below the reference
+REF_DECAY_DB = 0.1                           # per tick: a loud moment lifts the reference at once, silence lets it drift back
 
 
-def level_to_unit(rms: float) -> float:
-    """Mic RMS (float32 scale) to 0..1: the speech gate (-50 dB) is 0, loud speech (-16 dB) is 1."""
+def level_to_unit(rms: float, ref_db: float = REF_FLOOR_DB) -> float:
+    """Mic RMS (float32 scale) to 0..1 relative to a reference level: ref_db is 1, WINDOW_DB below it is 0.
+
+    Relative, not absolute: a fixed -50..-16 dB scale left the bars flat on a mic that peaks near -42 dB (2026-10-25)."""
     if rms <= 0:
         return 0.0
     db = 20 * math.log10(rms)
-    return min(1.0, max(0.0, (db + 50) / 34))
+    return min(1.0, max(0.0, (db - (ref_db - WINDOW_DB)) / WINDOW_DB))
 
 
 class Meter:
-    """Turns a stream of mic levels into five bar heights with a fast attack and a soft decay."""
+    """Turns a stream of mic levels into five bar heights with a fast attack and a soft decay.
+
+    The reference level follows the loudest thing heard lately (never under REF_FLOOR_DB), so the bars fill
+    on a quiet laptop mic and on a hot USB mic alike."""
 
     def __init__(self, min_h: float = 3.0, max_h: float = 18.0):
         self.min_h, self.max_h = min_h, max_h
         self._s = [0.0] * BARS
+        self._ref = REF_FLOOR_DB
 
     def reset(self) -> None:
-        self._s = [0.0] * BARS
+        self._s = [0.0] * BARS   # the reference stays: the microphone has not changed
 
     def update(self, rms: float) -> list[float]:
-        u = level_to_unit(rms)
+        db = 20 * math.log10(rms) if rms > 0 else -120.0
+        self._ref = max(REF_FLOOR_DB, self._ref - REF_DECAY_DB, db)
+        u = level_to_unit(rms, self._ref)
         for i, s in enumerate(self._s):
             self._s[i] = s + (u - s) * _ATTACK if u > s else s * _DECAY[i]
         span = self.max_h - self.min_h

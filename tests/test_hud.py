@@ -7,11 +7,31 @@ import pytest
 from voz.hud import COMPACT_W, H, MAX_W, MIN_W, Meter, level_to_unit, pick_screen, pill_origin, pill_width, shown_text
 
 
-def test_level_to_unit_maps_silence_to_zero_and_loud_speech_to_one():
+def test_level_to_unit_is_relative_to_a_reference_level():
+    """The bars show how loud you are compared with your own microphone, not with an absolute scale: Carlos's
+    MacBook mic peaks near 0.008 RMS and the old fixed scale left the bars flat (2026-10-25)."""
     assert level_to_unit(0.0) == 0.0
-    assert level_to_unit(0.003) == 0.0          # below the speech gate stays flat
-    assert 0.4 < level_to_unit(0.02) < 0.7      # normal speaking voice sits mid-scale
-    assert level_to_unit(0.2) == 1.0            # loud speech pins the bars
+    assert level_to_unit(0.0001) == 0.0                     # -80 dB: nothing there
+    assert 0.8 < level_to_unit(0.01) <= 1.0                 # a quiet mic fills the bars at the default reference
+    assert level_to_unit(0.2) == 1.0                        # loud speech pins them
+    assert level_to_unit(0.01, ref_db=-20.0) < 0.3          # the same level next to a loud reference is a murmur
+
+
+def test_meter_fills_the_bars_on_a_quiet_microphone():
+    m = Meter()
+    peak = max(m.update(0.008 if i % 7 < 5 else 0.001)[2] for i in range(42))
+    assert peak > m.min_h + 0.6 * (m.max_h - m.min_h)
+
+
+def test_meter_adapts_to_a_loud_microphone_and_back():
+    m = Meter()
+    for _ in range(20):
+        h = m.update(0.1)
+    assert h[2] == pytest.approx(m.max_h, abs=0.05)
+    for _ in range(400):                                     # ~13 s of ticks: the reference drifts back down
+        m.update(0.0)
+    peak = max(m.update(0.008 if i % 7 < 5 else 0.001)[2] for i in range(42))
+    assert peak > m.min_h + 0.6 * (m.max_h - m.min_h)
 
 
 def test_meter_silence_gives_resting_bars():

@@ -15,13 +15,15 @@ from typing import Callable
 import numpy as np
 
 from . import config, history, instance, status, textproc
-from .audio import is_speech
+from .audio import is_speech, speech_stats
 from .vocab import Vocab
 
 log = logging.getLogger("voz.app")
 MIN_SECONDS = 0.5
 DIDNT_CATCH = "Didn't catch that"
 JOIN_WINDOW_S = 300.0  # a paste this recent, into the same app, most likely landed in the field we are about to use
+HOLD_WAIT_S = 60.0  # longest a paste waits for the hotkey to come up when the next dictation is already being held
+SLOW_MIC_S = 0.25  # a CoreAudio start/stop slower than this runs inside the key tap's callback: worth a log line
 
 
 class Session:
@@ -50,18 +52,24 @@ class Session:
             self._app = self.frontmost_app() or ""
         except Exception:
             self._app = ""
+        t0 = time.monotonic()
         try:
             self.recorder.start()
         except Exception:
             log.exception("microphone start failed")
             self.hud.show("error", "Microphone not available")
             return
+        if time.monotonic() - t0 > SLOW_MIC_S:
+            log.warning("microphone took %.2fs to start", time.monotonic() - t0)
         self.hud.show("listening")
 
     def on_stop(self) -> None:
         if not self.recorder.recording:
             return
+        t0 = time.monotonic()
         audio = self.recorder.stop()
+        if time.monotonic() - t0 > SLOW_MIC_S:
+            log.warning("microphone took %.2fs to stop", time.monotonic() - t0)
         with self._cv:
             self._pending += 1
         self._q.put((audio, self._app))
@@ -69,6 +77,9 @@ class Session:
     def on_cancel(self) -> None:
         if self.recorder.recording:
             self.recorder.stop()
+            log.info("cancelled while recording (Esc, or another key pressed during the hold)")
+        else:
+            log.info("cancelled: lone tap, nothing recorded")
         self.hud.hide()
 
     def fix_last(self, corrected: str) -> list:
@@ -101,9 +112,12 @@ class Session:
         sr = getattr(self.recorder, "sr", 16000)
         seconds = len(audio) / sr
         if seconds < MIN_SECONDS:
+            log.info("dropped: %.2fs hold, too short (under %.1fs)", seconds, MIN_SECONDS)
             self.hud.hide()
             return
-        if not is_speech(audio):
+        if not is_speech(audio, sr):
+            floor, peak = speech_stats(audio, sr)
+            log.info("dropped: %.1fs audio, no speech (loud frames %.4f rms, quiet frames %.4f rms)", seconds, peak, floor)
             self.hud.show("error", DIDNT_CATCH)
             return
         self.hud.show("thinking")
@@ -117,6 +131,7 @@ class Session:
         if not text.strip():
             self.hud.show("error", DIDNT_CATCH)
             return
+        self._wait_for_hold_release()
         status = self.paste_fn(self._join_prefix(text, app) + text, self.cfg.paste_restore_delay_ms)
         self.hud.show("done" if status == "pasted" else "copied", text)
         self._last_paste = (app, text, time.monotonic()) if status == "pasted" else None
@@ -127,6 +142,16 @@ class Session:
             history.prune_clips(self.cfg.clip_retention_mb)
         if status == "pasted":
             time.sleep(self.cfg.paste_restore_delay_ms / 1000.0 + 0.05)
+
+    def _wait_for_hold_release(self) -> None:
+        """Never paste while the next dictation is being held: the Cmd+V would go out with the hotkey down and,
+        read back by the key tap, cancel that hold. The hold rarely outlasts a sentence or two."""
+        if not self.recorder.recording:
+            return
+        t0 = time.monotonic()
+        while self.recorder.recording and time.monotonic() - t0 < HOLD_WAIT_S:
+            time.sleep(0.02)
+        log.info("paste waited %.1fs for the hotkey to come up", time.monotonic() - t0)
 
     def _join_prefix(self, text: str, app: str) -> str:
         """Space or nothing before the new text. Read the character before the caret when Accessibility lets

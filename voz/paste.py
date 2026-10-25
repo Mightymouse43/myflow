@@ -13,6 +13,8 @@ import Quartz
 import ApplicationServices as AX
 from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 
+from .hotkey import OWN_EVENT_TAG
+
 log = logging.getLogger("voz.paste")
 
 Snapshot = list[list[tuple[str, bytes]]]  # one inner list per pasteboard item
@@ -95,10 +97,12 @@ def restore_pasteboard(snap: Snapshot) -> None:
 def _send_cmd_v() -> bool:
     try:
         src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+        Quartz.CGEventSourceSetUserData(src, OWN_EVENT_TAG)
         down = Quartz.CGEventCreateKeyboardEvent(src, KEY_V, True)
         up = Quartz.CGEventCreateKeyboardEvent(src, KEY_V, False)
-        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
-        Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
+        for ev in (down, up):
+            Quartz.CGEventSetFlags(ev, Quartz.kCGEventFlagMaskCommand)
+            Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGEventSourceUserData, OWN_EVENT_TAG)  # hotkey.py skips these
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
         return True

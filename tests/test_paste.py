@@ -195,3 +195,14 @@ def test_char_before_caret_is_unknown_when_untrusted(monkeypatch):
 def test_char_before_caret_real_probe_never_raises():
     out = paste.char_before_caret()
     assert out is None or (isinstance(out, str) and len(out) <= 1)
+
+
+def test_cmd_v_events_carry_the_apps_own_tag(monkeypatch):
+    """So the hotkey tap can tell MyFlow's paste from a key the user pressed."""
+    import Quartz
+    from voz.hotkey import OWN_EVENT_TAG
+    posted = []
+    monkeypatch.setattr(paste.Quartz, "CGEventPost", lambda tap, ev: posted.append(ev))
+    assert paste._send_cmd_v() is True
+    assert len(posted) == 2
+    assert all(Quartz.CGEventGetIntegerValueField(ev, Quartz.kCGEventSourceUserData) == OWN_EVENT_TAG for ev in posted)

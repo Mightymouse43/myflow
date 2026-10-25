@@ -12,6 +12,7 @@ log = logging.getLogger("voz.hotkey")
 KEYCODES = {"right_option": 61, "right_command": 54, "right_control": 62, "fn": 63,
             "left_option": 58, "left_control": 59}
 ESC_KEYCODE = 53
+OWN_EVENT_TAG = 0x4D59464C  # "MYFL": stamped on the Cmd+V MyFlow posts (paste.py) so the tap never reads it as a chord
 
 # Which modifier flag a given modifier keycode toggles in a flagsChanged event.
 _FLAG_FOR_KEYCODE = {
@@ -106,6 +107,8 @@ class Listener:
         if type_ in (Quartz.kCGEventTapDisabledByTimeout, Quartz.kCGEventTapDisabledByUserInput):
             Quartz.CGEventTapEnable(self._tap, True)
             return event
+        if Quartz.CGEventGetIntegerValueField(event, Quartz.kCGEventSourceUserData) == OWN_EVENT_TAG:
+            return event  # our own paste on its way to the front app, not a key the user pressed
         keycode = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
         now = time.monotonic()
         if type_ == Quartz.kCGEventFlagsChanged:

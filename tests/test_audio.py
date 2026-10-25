@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from voz.audio import Recorder, is_speech, read_wav
+from voz.audio import Recorder, is_speech, read_wav, rms, speech_stats
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -151,3 +151,30 @@ def test_recorder_half_second_on_the_real_microphone():
     assert 0.4 * 16000 <= len(audio) <= 0.8 * 16000
     assert abs(rec.seconds - len(audio) / 16000) < 0.01
     assert rec.recording is False
+
+
+# ---- the speech gate on a quiet microphone ----------------------------------------------------
+# Carlos's MacBook mic (input volume 38 %) records speech near 0.006 RMS; the old absolute 0.004 floor
+# silently dropped his quieter takes as "Didn't catch that" (2026-10-25). Speech is judged by its dynamics
+# (loud frames well above the quiet ones), not by one absolute level.
+
+def test_quiet_speech_passes_the_gate():
+    audio, _ = read_wav(FIX / "sample-20s.wav")
+    quiet = (audio * (0.003 / rms(audio))).astype(np.float32)   # whole-clip RMS 0.003, under the old floor
+    assert is_speech(quiet) is True
+
+
+def test_steady_room_noise_fails_the_gate_even_when_louder_than_the_old_floor():
+    hiss = np.random.default_rng(1).normal(0, 0.006, 32000).astype(np.float32)   # a fan: level, no dynamics
+    assert is_speech(hiss) is False
+
+
+def test_muted_microphone_fails_the_gate():
+    nothing = np.random.default_rng(2).normal(0, 0.0002, 32000).astype(np.float32)
+    assert is_speech(nothing) is False
+
+
+def test_speech_stats_reports_the_quiet_and_loud_frames():
+    audio = np.concatenate([np.zeros(3200), np.full(3200, 0.1)]).astype(np.float32)
+    floor, peak = speech_stats(audio)
+    assert floor == 0.0 and peak == pytest.approx(0.1, rel=1e-3)

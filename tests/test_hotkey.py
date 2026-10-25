@@ -89,3 +89,45 @@ def test_other_keys_are_ignored():
     d.feed(54, True, 0.0)
     d.feed(54, False, 0.2)
     assert ev == []
+
+
+# ---- the event tap and the app's own synthetic keys -------------------------------------------
+
+def _key_event(keycode, down, flags=None, type_=None, tag=None):
+    import Quartz
+    ev = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
+    if type_ is not None:
+        Quartz.CGEventSetType(ev, type_)
+    if flags is not None:
+        Quartz.CGEventSetFlags(ev, flags)
+    if tag is not None:
+        Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGEventSourceUserData, tag)
+    return ev
+
+
+def test_listener_feeds_modifier_changes_from_real_events():
+    import Quartz
+    from voz.hotkey import Listener
+    d, ev = mk(tap_ms=0)
+    lst = Listener(d)
+    down = _key_event(61, True, Quartz.kCGEventFlagMaskAlternate, Quartz.kCGEventFlagsChanged)
+    up = _key_event(61, False, 0, Quartz.kCGEventFlagsChanged)
+    lst._callback(None, Quartz.kCGEventFlagsChanged, down, None)
+    lst._callback(None, Quartz.kCGEventFlagsChanged, up, None)
+    assert ev == ["start", "stop"]
+
+
+def test_listener_ignores_the_apps_own_synthetic_keys():
+    """MyFlow pastes with a synthetic Cmd+V. The tap used to read that V as a chord and cancel the hold that
+    had already started for the next dictation, which then vanished without a trace (2026-10-25)."""
+    import Quartz
+    from voz.hotkey import OWN_EVENT_TAG, Listener
+    d, ev = mk()
+    lst = Listener(d)
+    d.feed(61, True, 0.0)
+    own_v = _key_event(9, True, Quartz.kCGEventFlagMaskCommand, tag=OWN_EVENT_TAG)
+    lst._callback(None, Quartz.kCGEventKeyDown, own_v, None)
+    assert ev == ["start"]
+    someone_elses_v = _key_event(9, True, Quartz.kCGEventFlagMaskCommand)
+    lst._callback(None, Quartz.kCGEventKeyDown, someone_elses_v, None)
+    assert ev == ["start", "cancel"]

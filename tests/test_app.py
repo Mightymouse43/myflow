@@ -226,3 +226,37 @@ def test_hud_and_history_show_the_text_without_the_join_space(tmp_voz):
     assert pasted[1] == " I believe we do."
     assert hud.calls[-1] == ("done", "I believe we do.")
     assert history.last()["final"] == "I believe we do."
+
+
+# ---- dropped dictations (2026-10-25) ------------------------------------------------------------
+
+def test_paste_waits_until_the_next_hold_is_released(tmp_voz):
+    """Take 1 landing while take 2 is already held: its Cmd+V would go out with the hotkey down (Cmd+Option+V)
+    and, read back by the tap, cancel take 2. The paste waits for the key to come up instead."""
+    s, pasted, hud, eng = make(["one", "two"], [SPEECH, SPEECH], delay=0.2, cfg=Config(paste_restore_delay_ms=50))
+    s.on_start(); s.on_stop()          # take 1 queued, transcribing for 0.2 s
+    s.on_start()                       # take 2 held before take 1 lands
+    time.sleep(0.6)
+    assert pasted == []                # nothing pasted while the key is down
+    s.on_stop()
+    assert s.wait_idle(5)
+    assert pasted == ["One", " Two"]
+
+
+def test_drops_are_logged_with_a_reason(tmp_voz, caplog):
+    """Every take that does not reach the engine leaves a line in voz.log; the gate used to drop in silence."""
+    caplog.set_level("INFO", logger="voz.app")
+    hiss = np.random.default_rng(0).normal(0, 0.006, 32000).astype(np.float32)
+    s, pasted, hud, eng = make(["x", "y"], [np.zeros(3200, dtype=np.float32), hiss])
+    s.on_start(); s.on_stop(); s.on_start(); s.on_stop(); assert s.wait_idle(5)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("too short" in m for m in msgs), msgs
+    assert any("no speech" in m for m in msgs), msgs
+    assert pasted == [] and eng.prompts == []
+
+
+def test_cancel_is_logged(tmp_voz, caplog):
+    caplog.set_level("INFO", logger="voz.app")
+    s, pasted, hud, eng = make(["x"], [SPEECH])
+    s.on_start(); s.on_cancel()
+    assert any("cancel" in r.getMessage() for r in caplog.records)

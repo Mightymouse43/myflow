@@ -28,11 +28,31 @@ def rms(audio: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
 
 
-def is_speech(audio: np.ndarray, threshold: float = 0.004) -> bool:
-    """True when the clip has more than room-tone energy. Keeps accidental taps from pasting."""
+SILENCE_RMS = 0.0005   # loud frames under -66 dBFS: a muted or unplugged microphone
+LOUD_RMS = 0.02        # loud frames over -34 dBFS pass on level alone, whatever their dynamics
+DYNAMICS = 3.0         # speech's loud frames sit well above its quiet ones (real clips: 5x and up); a fan's do not
+
+
+def speech_stats(audio: np.ndarray, sr: int = 16000, frame_s: float = 0.02) -> tuple[float, float]:
+    """RMS of the quiet (10th percentile) and loud (95th percentile) 20 ms frames of a clip."""
+    n = max(1, int(sr * frame_s))
+    frames = audio[: len(audio) // n * n].reshape(-1, n)
+    if len(frames) == 0:
+        return 0.0, 0.0
+    levels = np.sqrt(np.mean(np.square(frames, dtype=np.float64), axis=1))
+    return float(np.percentile(levels, 10)), float(np.percentile(levels, 95))
+
+
+def is_speech(audio: np.ndarray, sr: int = 16000) -> bool:
+    """True when the clip has the dynamics of speech: its loud frames stand well above its quiet ones.
+
+    Judged against the clip itself, not an absolute level, so a quiet microphone (a MacBook mic at a low input
+    volume peaks near 0.008 RMS) still passes while steady room noise, mains hum and a muted mic do not.
+    An absolute floor of 0.004 RMS silently dropped the quieter takes of exactly such a mic (2026-10-25)."""
     if audio.size < 1600:  # under 0.1 s at 16 kHz
         return False
-    return rms(audio) > threshold
+    floor, peak = speech_stats(audio, sr)
+    return peak > LOUD_RMS or (peak > SILENCE_RMS and peak > floor * DYNAMICS)
 
 
 def read_wav(path: Path | str) -> tuple[np.ndarray, int]:

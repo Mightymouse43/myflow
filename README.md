@@ -7,6 +7,7 @@ I was paying $240 a year for a dictation app. So I built this one with Claude an
 ## Will it run on my computer?
 
 * **Yes:** a Mac with Apple Silicon (M1 or newer) on macOS 14 or later.
+* **RAM:** 8 GB works, 16 GB is comfortable. MyFlow keeps about 2 GB in memory while it runs so the first word after a pause is as fast as the rest.
 * **No:** Intel Macs, Windows, Linux. The speech models run on Apple's MLX and the rest is macOS plumbing. Windows and Linux folks: see [Not on a Mac?](#not-on-a-mac) below.
 
 ## Install with Claude (easiest)

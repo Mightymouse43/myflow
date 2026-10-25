@@ -80,3 +80,19 @@ def test_parakeet_transcribes_on_a_different_thread_than_it_loaded_on():
     worker.join(150); loader.join(5)
     assert "error" not in out, out.get("error")
     assert len(out["text"].split()) >= 5
+
+
+@pytest.mark.slow
+def test_whisper_wires_its_weights_and_gives_back_the_scratch_after_a_take():
+    """Idle MyFlow used to sit on 3.5 GB of graphics memory and still lose its weights to swap (2026-10-25)."""
+    import mlx.core as mx
+
+    from voz.audio import read_wav
+    from voz.engines import load_engine
+
+    eng = load_engine(Config(engine="whisper"))
+    eng.load()
+    assert eng.resident_bytes > 1_000_000_000          # the 1.6 GB of weights are wired
+    audio, sr = read_wav(FIX / "sample-20s.wav")
+    assert eng.transcribe(audio, sr)
+    assert mx.get_cache_memory() == 0                  # no scratch left behind

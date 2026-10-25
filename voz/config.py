@@ -49,6 +49,7 @@ class Config:
     save_clips: bool = True
     clip_retention_mb: int = 2048
     paste_restore_delay_ms: int = 400
+    keep_model_resident: bool = True   # wire the weights in RAM so a pause never costs a 10 s page-in (macOS 15+)
     mic_idle_seconds: int = 120   # unused since the AudioQueue recorder (mic closes on key release); kept so old config files still load
     parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v3"
     whisper_model: str = "mlx-community/whisper-large-v3-turbo"

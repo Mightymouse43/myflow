@@ -9,6 +9,7 @@ from typing import Protocol
 
 import numpy as np
 
+from . import residency
 from .config import Config
 
 log = logging.getLogger("voz.engines")
@@ -48,8 +49,10 @@ class ParakeetEngine:
     name = "parakeet"
     LONG_CLIP_SECONDS = 90.0
 
-    def __init__(self, model_id: str):
+    def __init__(self, model_id: str, keep_resident: bool = True):
         self.model_id = model_id
+        self.keep_resident = keep_resident
+        self.resident_bytes = 0
         self._model = None
 
     def load(self) -> None:
@@ -65,9 +68,18 @@ class ParakeetEngine:
             # mlx_whisper evaluates its weights at load, which is why Whisper never hit this.
             mx.eval(model.parameters())
             self._model = model
+            self.resident_bytes = residency.pin(mx, self.keep_resident)
 
     def transcribe(self, audio: np.ndarray, sr: int, prompt_words: list[str] | None = None) -> str:
         self.load()
+        import mlx.core as mx
+
+        try:
+            return self._transcribe(audio, sr)
+        finally:
+            residency.release_scratch(mx)
+
+    def _transcribe(self, audio: np.ndarray, sr: int) -> str:
         import mlx.core as mx
         from parakeet_mlx.audio import get_logmel
 
@@ -97,13 +109,16 @@ class ParakeetEngine:
 class WhisperEngine:
     name = "whisper"
 
-    def __init__(self, model_id: str, language: str = "en"):
+    def __init__(self, model_id: str, language: str = "en", keep_resident: bool = True):
         self.model_id = model_id
         self.language = None if language in ("", "auto") else language
+        self.keep_resident = keep_resident
+        self.resident_bytes = 0
         self._loaded = False
 
     def load(self) -> None:
         if not self._loaded:
+            import mlx.core as mx
             import mlx_whisper
 
             log.info("loading %s", self.model_id)
@@ -111,8 +126,17 @@ class WhisperEngine:
             mlx_whisper.transcribe(np.zeros(8000, dtype=np.float32), path_or_hf_repo=self.model_id,
                                    language=self.language, fp16=True, verbose=None)
             self._loaded = True
+            self.resident_bytes = residency.pin(mx, self.keep_resident)
 
     def transcribe(self, audio: np.ndarray, sr: int, prompt_words: list[str] | None = None) -> str:
+        import mlx.core as mx
+
+        try:
+            return self._transcribe(audio, sr, prompt_words)
+        finally:
+            residency.release_scratch(mx)
+
+    def _transcribe(self, audio: np.ndarray, sr: int, prompt_words: list[str] | None) -> str:
         import mlx_whisper
 
         a = _resample(_as_mono_f32(audio), sr)
@@ -137,7 +161,7 @@ class WhisperEngine:
 
 def load_engine(cfg: Config) -> Engine:
     if cfg.engine == "whisper":
-        return WhisperEngine(cfg.whisper_model, cfg.language)
+        return WhisperEngine(cfg.whisper_model, cfg.language, keep_resident=cfg.keep_model_resident)
     if cfg.engine == "parakeet":
-        return ParakeetEngine(cfg.parakeet_model)
+        return ParakeetEngine(cfg.parakeet_model, keep_resident=cfg.keep_model_resident)
     raise ValueError(f"unknown engine {cfg.engine!r} (use parakeet or whisper)")

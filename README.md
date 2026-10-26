@@ -48,6 +48,8 @@ Health check:
 | Press Esc while listening | Cancels, nothing is pasted |
 | Press any other key while holding | Also cancels (so Option+e accents never dictate) |
 | Say "new line" or "new paragraph" | Inserts a line break or a blank line |
+| Say "quote hold my cup end quote" | Types "hold my cup" in quotation marks |
+| Say "make it say hold my cup" (or "it should say", "the card says") | Quotes the words that follow, up to the next pause |
 
 A small pill near the window you're typing into shows listening (live voice bars), thinking, done. If pasting is blocked (Accessibility missing, or a password field) the pill says "Copied" and the text is waiting on your clipboard.
 

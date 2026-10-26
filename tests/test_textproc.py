@@ -89,3 +89,46 @@ def test_join_adds_nothing_after_an_opening_bracket_or_quote():
 def test_join_adds_nothing_before_a_spoken_newline_or_empty_text():
     assert join_prefix(".", "\nNext point") == ""
     assert join_prefix(".", "") == ""
+
+
+# ---- spoken quotes (Carlos, 2026-10-26): "say X" and "quote X end quote" ------------------------------------
+
+from voz.textproc import apply_quotes
+
+
+def test_explicit_quote_command():
+    assert apply_quotes("quote hold my cup end quote") == '"hold my cup".'
+    assert apply_quotes("Quote, hold my cup, end quote.") == '"hold my cup".'
+    assert apply_quotes("make the sign read open quote wet paint close quote and leave it") == 'make the sign read "wet paint" and leave it'
+    assert apply_quotes("it says quote hi there unquote, then stops") == 'it says "hi there", then stops'
+
+
+def test_say_shortcut_quotes_to_the_end_of_the_clause():
+    assert apply_quotes("I would like it to say hold my cup") == 'I would like it to say "hold my cup".'
+    assert apply_quotes("Instead of putting the end, we actually make it say Happy Halloween.") == \
+        'Instead of putting the end, we actually make it say "Happy Halloween".'
+    assert apply_quotes("The card says happy birthday, and then the hand draws the webs.") == \
+        'The card says "happy birthday", and then the hand draws the webs.'
+    assert apply_quotes("it should say hold my cup, then a new line") == 'it should say "hold my cup", then a new line'
+    assert apply_quotes("have the button say get started?") == 'have the button say "get started"?'
+
+
+def test_say_shortcut_leaves_ordinary_uses_of_say_alone():
+    for line in ("I'd say 10 seconds is enough.", "Let's say we do it tomorrow.", "People say it's hard.",
+                 "Or how about saying it's that time of the year again but like in spooky letters.",
+                 "I would say the second one.", "They say the show is good."):
+        assert apply_quotes(line) == line, line
+
+
+def test_say_shortcut_gives_up_on_a_long_unpunctuated_tail():
+    long = "make it say " + " ".join(["word"] * 13)
+    assert apply_quotes(long) == long
+
+
+def test_say_shortcut_does_not_double_quote_an_explicit_quote():
+    assert apply_quotes("make it say quote hold my cup end quote") == 'make it say "hold my cup".'
+
+
+def test_clean_pipeline_quotes_and_capitalises():
+    assert clean("um we actually make it say happy halloween", Config()) == 'We actually make it say "happy halloween".'
+    assert clean("make it say hi there", Config(spoken_commands=False)) == "Make it say hi there."

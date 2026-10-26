@@ -80,6 +80,38 @@ def apply_spoken_commands(text: str) -> str:
     return out.strip()
 
 
+# Spoken quotes. Explicit: "quote hold my cup end quote" (also "open quote ... close quote", "... unquote").
+_EXPLICIT_QUOTE = re.compile(
+    r"(?i)\b(?:open\s+)?quote\b[,.:]?\s*(?P<q>[^\n]+?)[,.]?\s*\b(?:end\s+quote|close\s+quote|unquote)\b(?P<end>[,.!?;:]?)")
+# Shortcut: after "make it say", "it should say", "the card says" and the like, the words up to the next
+# punctuation are what the thing says. "I'd say", "let's say", "people say" are not in the list on purpose.
+_SAY_LEADS = (
+    r"(?:make|have|let|tell|want|like|need|get)\s+(?:it|him|her|them|this|that|the\s+\w+)\s+(?:to\s+)?say",
+    r"(?:it|this|that|which|he|she|they|the\s+\w+)\s+(?:should|would|could|will|can|must|needs\s+to|has\s+to|to)\s+say",
+    r"(?:it|this|that|which|he|she|the\s+\w+)\s+says",
+)
+_SAY = re.compile(r"(?i)\b(?P<lead>" + "|".join(_SAY_LEADS) + r")\s+(?P<q>[^,.!?;:\n\"]+?)(?P<end>[,.!?;:]|$)", re.M)
+MAX_QUOTE_WORDS = 12   # a longer tail with no punctuation is too uncertain to wrap
+
+
+def apply_quotes(text: str) -> str:
+    """Spoken quotation marks: an explicit quote ... end quote, or the clause after "make it say" and friends."""
+    if not text:
+        return text
+    out = _EXPLICIT_QUOTE.sub(lambda m: f'"{m.group("q").strip()}"{m.group("end")}', text)
+
+    def say(m: re.Match) -> str:
+        q = m.group("q").strip()
+        if not q or len(q.split()) > MAX_QUOTE_WORDS or q[0] in "\"\u201c":
+            return m.group(0)
+        return f'{m.group("lead")} "{q}"{m.group("end")}'
+
+    out = _SAY.sub(say, out)
+    if out.endswith('"') and len(out.split()) >= 3:
+        out += "."   # tidy adds a full stop after a word; a closing quote needs the same
+    return out
+
+
 def tidy(text: str) -> str:
     out = re.sub(r"[ \t]+", " ", text).strip()
     out = re.sub(r"\s+([" + re.escape(_PUNCT) + "])", r"\1", out)
@@ -102,7 +134,7 @@ def clean(text: str, cfg: Config) -> str:
         out = remove_fillers(out, cfg.fillers)
     out = collapse_repeats(out)
     if cfg.spoken_commands:
-        out = apply_spoken_commands(out)
+        out = apply_quotes(apply_spoken_commands(out))
     return tidy(out)
 
 

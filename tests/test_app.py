@@ -260,3 +260,58 @@ def test_cancel_is_logged(tmp_voz, caplog):
     s, pasted, hud, eng = make(["x"], [SPEECH])
     s.on_start(); s.on_cancel()
     assert any("cancel" in r.getMessage() for r in caplog.records)
+
+
+# ---- modal windows need the keyboard (2026-10-26) --------------------------------------------------
+
+class _FakeRunningApp:
+    def __init__(self, pid, name="Claude"):
+        self.pid, self.name, self.activated = pid, name, 0
+
+    def processIdentifier(self):
+        return self.pid
+
+    def activateWithOptions_(self, _opts):
+        self.activated += 1
+
+
+class _FakeApp:
+    def __init__(self):
+        self.calls = []
+
+    def activateIgnoringOtherApps_(self, flag):
+        self.calls.append(("activate", flag))
+
+
+def test_modal_activates_the_app_before_running_and_hands_focus_back_after():
+    """A menu bar app never becomes active by itself, so the Fix window opened with no key window and typing went
+    to the front app (Carlos, 2026-10-26)."""
+    import os
+    from voz.app import with_keyboard
+    app, prev = _FakeApp(), _FakeRunningApp(pid=4242)
+    order = []
+    result = with_keyboard(lambda: order.append("run") or "typed", app=app, frontmost=lambda: prev)
+    assert result == "typed"
+    assert app.calls == [("activate", True)] and order == ["run"]
+    assert prev.activated == 1                      # back to the app the user was dictating into
+
+
+def test_modal_does_not_reactivate_itself_or_a_missing_front_app():
+    import os
+    from voz.app import with_keyboard
+    app, me = _FakeApp(), _FakeRunningApp(pid=os.getpid())
+    assert with_keyboard(lambda: "x", app=app, frontmost=lambda: me) == "x" and me.activated == 0
+    assert with_keyboard(lambda: "y", app=app, frontmost=lambda: None) == "y"
+
+
+def test_modal_hands_focus_back_even_when_the_window_raises():
+    from voz.app import with_keyboard
+    app, prev = _FakeApp(), _FakeRunningApp(pid=4242)
+
+    def boom():
+        raise RuntimeError("alert failed")
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        with_keyboard(boom, app=app, frontmost=lambda: prev)
+    assert prev.activated == 1

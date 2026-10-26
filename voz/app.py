@@ -179,6 +179,25 @@ def choose_engines(cfg: config.Config, cached: Callable[[str], bool]) -> list[st
     return order or [cfg.engine]
 
 
+def with_keyboard(run: Callable[[], object], *, app=None, frontmost: Callable[[], object] | None = None):
+    """Run a modal window with the keyboard attached, then hand focus back.
+
+    A menu bar app with no Dock presence never becomes active on its own, so its alert opened with no key
+    window and every keystroke went to the app in front (the Fix window could not be typed into, 2026-10-26).
+    Activating first makes the alert key; afterwards the app the user was working in gets the focus back."""
+    import AppKit
+
+    app = app or AppKit.NSApp
+    frontmost = frontmost or (lambda: AppKit.NSWorkspace.sharedWorkspace().frontmostApplication())
+    prev = frontmost()
+    app.activateIgnoringOtherApps_(True)
+    try:
+        return run()
+    finally:
+        if prev is not None and prev.processIdentifier() != os.getpid():
+            prev.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+
+
 def _frontmost_app_name() -> str:
     import AppKit
 
@@ -382,6 +401,9 @@ def build_app(cfg: config.Config):
                 log.info("dictionary reloaded (%d words)", len(self.vocab.words()))
 
         # ---- menu actions ---------------------------------------------------
+        def _alert(self, *args, **kwargs):
+            return with_keyboard(lambda: rumps.alert(*args, **kwargs))
+
         def pick_engine(self, sender):
             name = next(n for n, it in self.engine_items.items() if it is sender)
             if name == self.cfg.engine:
@@ -396,12 +418,12 @@ def build_app(cfg: config.Config):
             """Fetch the weights in a separate process (never inside the app) and switch when they land."""
             item = self.engine_items[name]
             if self._downloading == name:
-                rumps.alert(f"{ENGINE_LABELS[name]} is still downloading",
+                self._alert(f"{ENGINE_LABELS[name]} is still downloading",
                             "MyFlow switches over by itself the moment it lands.")
                 return
             self._downloading = name
             item.title = f"{ENGINE_LABELS[name]} (downloading…)"
-            rumps.alert(f"{ENGINE_LABELS[name]} isn't downloaded yet",
+            self._alert(f"{ENGINE_LABELS[name]} isn't downloaded yet",
                         f"MyFlow is fetching it in the background now (about 2.5 GB; on this connection that can take "
                         f"an hour). Keep dictating with {ENGINE_LABELS[self.cfg.engine]}; the switch happens on its own "
                         f"when the download lands. Progress: ~/.voz/download-{name}.log")
@@ -452,7 +474,7 @@ def build_app(cfg: config.Config):
 
         def toggle_polish(self, _):
             if not self.cfg.polish and not Polisher.available():
-                rumps.alert("Polish needs one more package",
+                self._alert("Polish needs one more package",
                             "Run scripts/install.sh again (it installs mlx-lm), then turn Polish on.")
                 return
             self.cfg.polish = not self.cfg.polish
@@ -473,12 +495,12 @@ def build_app(cfg: config.Config):
         def fix_last(self, _):
             last = history.last()
             if not last:
-                rumps.alert("MyFlow", "Nothing dictated yet.")
+                self._alert("MyFlow", "Nothing dictated yet.")
                 return
             win = rumps.Window(message="Fix only the words MyFlow misheard. Rewording is not learned, mishearings are.",
                                title="Fix last dictation", default_text=last["final"], ok="Save", cancel="Cancel",
                                dimensions=(420, 120))
-            resp = win.run()
+            resp = with_keyboard(win.run)
             if resp.clicked and self.session:
                 rules = self.session.fix_last(resp.text)
                 self._set_status(f"Learned {len(rules)} correction(s)" if rules else "Saved. No new rules.")
@@ -487,7 +509,7 @@ def build_app(cfg: config.Config):
             win = rumps.Window(message="Word or phrase, exactly as it should be typed. Optional: heard form => Word",
                                title="Add to dictionary", default_text="", ok="Add", cancel="Cancel",
                                dimensions=(320, 24))
-            resp = win.run()
+            resp = with_keyboard(win.run)
             if resp.clicked and resp.text.strip():
                 line = resp.text.strip()
                 with config.DICTIONARY_PATH.open("a") as f:
@@ -501,13 +523,13 @@ def build_app(cfg: config.Config):
         def show_learned(self, _):
             rules = self.vocab.learned
             body = "\n".join(f"{r.heard}  ->  {r.canonical}" for r in rules) or "Nothing learned yet."
-            rumps.alert("Learned corrections", body)
+            self._alert("Learned corrections", body)
 
         def forget_learned(self, _):
             if not self.vocab.learned:
-                rumps.alert("Learned corrections", "Nothing to forget.")
+                self._alert("Learned corrections", "Nothing to forget.")
                 return
-            if rumps.alert("Forget all learned corrections?", f"{len(self.vocab.learned)} rule(s) will be removed. "
+            if self._alert("Forget all learned corrections?", f"{len(self.vocab.learned)} rule(s) will be removed. "
                            "Dictionary words stay.", ok="Forget", cancel="Cancel") == 1:
                 self.vocab.forget_learned()
                 self._set_status("Learned corrections cleared")
@@ -515,7 +537,7 @@ def build_app(cfg: config.Config):
         def show_history(self, _):
             recs = history.recent(10)
             body = "\n".join(f"{r['ts'][11:16]}  {r['final']}" for r in recs) or "Nothing yet."
-            rumps.alert("Recent dictations", body)
+            self._alert("Recent dictations", body)
 
         def check_permissions(self, _):
             trusted = paste.is_trusted()
@@ -523,7 +545,7 @@ def build_app(cfg: config.Config):
             msg += "\nMicrophone: macOS asks the first time you hold the key."
             if not trusted:
                 paste.request_trust()
-            rumps.alert("MyFlow permissions", msg)
+            self._alert("MyFlow permissions", msg)
 
         def quit(self, _):
             if self.listener:

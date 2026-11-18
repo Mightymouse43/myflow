@@ -1,0 +1,10 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-latest   # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
+      - run: VOZ_CI=1 VOZ_SKIP_TRUST_PROMPT=1 .venv/bin/python -m pytest -q

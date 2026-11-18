@@ -141,7 +141,7 @@ def test_recorder_watchdog_reports_a_stop_that_hangs():
     assert len(stuck) == 1 and "stop" in stuck[0].lower()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="CoreAudio only")
+@pytest.mark.skipif(sys.platform != "darwin" or bool(__import__("os").environ.get("VOZ_CI")), reason="needs a real microphone")
 def test_recorder_half_second_on_the_real_microphone():
     rec = Recorder(sr=16000)
     rec.start()

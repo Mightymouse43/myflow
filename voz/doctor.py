@@ -24,9 +24,18 @@ def _model_cached(model_id: str) -> bool:
     return False
 
 
+def secure_input_line(enabled: bool, holder: tuple[int, str] | None) -> str:
+    if not enabled:
+        return "Secure keyboard input: off"
+    if holder is None:
+        return "Secure keyboard input: ON, holder unknown (pastes blocked until it is released)"
+    return (f"Secure keyboard input: ON, held by {holder[1]} (pid {holder[0]}); pastes into it are blocked, "
+            f"other apps paste normally. Stuck? Click a normal text box in {holder[1]} or quit it.")
+
+
 def report() -> str:
     from . import history, launchagent
-    from .paste import is_trusted
+    from .paste import is_trusted, secure_input_enabled, secure_input_holder
 
     from . import status
 
@@ -48,6 +57,7 @@ def report() -> str:
         lines.append(f"Microphone input: {dev['name']} ({int(dev['default_samplerate'])} Hz)")
     except Exception as e:  # pragma: no cover
         lines.append(f"Microphone input: not found ({e})")
+    lines.append(secure_input_line(secure_input_enabled(), secure_input_holder()))
     lines.append(f"Engine: {cfg.engine}  hotkey: {cfg.hotkey}  language: {cfg.language}  polish: {'on' if cfg.polish else 'off'}")
     for label, mid in (("Whisper", cfg.whisper_model), ("Parakeet", cfg.parakeet_model), ("Polish LLM", cfg.polish_model)):
         lines.append(f"Model {label}: {mid} -> {'cached' if _model_cached(mid) else 'not downloaded yet'}")

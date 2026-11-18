@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import re
+import subprocess
 import threading
 import time
 from typing import Literal
@@ -24,6 +26,11 @@ MODIFIER_KEYCODES = (54, 55, 58, 61, 59, 62, 56, 60, 63)
 MODIFIER_WAIT_S = 1.5  # how long to wait for the user to let go of the hotkey before Cmd+V
 AX_TIMEOUT_S = 0.3  # a frozen front app must not hold the paste hostage (the AX default is 6 s)
 _carbon = None
+_why = ""  # why the last paste_text returned "copied", for the HUD and the log
+
+
+def why_copied() -> str:
+    return _why
 
 
 def is_trusted() -> bool:
@@ -46,6 +53,44 @@ def secure_input_enabled() -> bool:
     except Exception:  # pragma: no cover
         log.exception("secure input probe failed")
         return False
+
+
+def _frontmost() -> tuple[int, str] | None:
+    app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    return (int(app.processIdentifier()), str(app.localizedName())) if app is not None else None
+
+
+def secure_input_holder() -> tuple[int, str] | None:
+    """(pid, name) of the process holding secure keyboard input, read from IOHIDSystem (about 30 ms), or None."""
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-l", "-w", "0"], capture_output=True, text=True,
+                             timeout=2).stdout
+    except Exception:
+        log.debug("ioreg failed", exc_info=True)
+        return None
+    m = re.search(r'kCGSSessionSecureInputPID"=(\d+)', out)
+    if not m:
+        return None
+    pid = int(m.group(1))
+    app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    return (pid, str(app.localizedName()) if app is not None else f"pid {pid}")
+
+
+def secure_input_blocks() -> str | None:
+    """Why secure keyboard input stops this paste, or None when it does not.
+
+    Secure input only matters when the app in front is the one holding it (you are in its password field).
+    Chrome once kept the grant for a whole day after a password field and every paste into Claude fell back
+    to the clipboard (2026-11-18); a holder that is not in front is ignored."""
+    if not secure_input_enabled():
+        return None
+    holder, front = secure_input_holder(), _frontmost()
+    if holder is None:
+        return "Secure keyboard input is on (unknown app), paste blocked"
+    if front is None or holder[0] == front[0]:
+        return f"{holder[1]} holds secure keyboard input (a password field?), paste blocked"
+    log.info("secure input held by %s (pid %d), not the front app; pasting anyway", holder[1], holder[0])
+    return None
 
 
 def _modifier_held() -> bool:
@@ -113,19 +158,25 @@ def _send_cmd_v() -> bool:
 
 def paste_text(text: str, restore_delay_ms: int = 400) -> Literal["pasted", "copied"]:
     """Put text at the cursor. Falls back to leaving it on the clipboard when pasting is impossible."""
+    global _why
     snap = snapshot_pasteboard()
     pb = _pb()
     pb.clearContents()
     pb.setString_forType_(text, AppKit.NSPasteboardTypeString)
     if not is_trusted():
-        log.warning("Accessibility not granted; text left on the clipboard")
+        _why = "Accessibility not granted, text left on the clipboard"
+        log.warning(_why)
         return "copied"
-    if secure_input_enabled():
-        log.info("secure input active; text left on the clipboard")
+    reason = secure_input_blocks()
+    if reason:
+        _why = reason
+        log.info("%s; text left on the clipboard", reason)
         return "copied"
     _wait_for_modifiers_release()
     if not _send_cmd_v():
+        _why = "Could not post Cmd+V, text left on the clipboard"
         return "copied"
+    _why = ""
     threading.Timer(max(restore_delay_ms, 50) / 1000.0, restore_pasteboard, args=(snap,)).start()
     return "pasted"
 

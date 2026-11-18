@@ -31,8 +31,9 @@ class Session:
 
     def __init__(self, engine, recorder, vocab: Vocab, cfg: config.Config, paste_fn: Callable[[str, int], str],
                  hud, frontmost_app: Callable[[], str] | None = None, polisher=None,
-                 caret_fn: Callable[[], str | None] | None = None):
+                 caret_fn: Callable[[], str | None] | None = None, copied_reason: Callable[[], str] | None = None):
         self.engine, self.recorder, self.vocab, self.cfg = engine, recorder, vocab, cfg
+        self.copied_reason = copied_reason or (lambda: "")  # paste.why_copied in the app
         self.paste_fn, self.hud, self.polisher = paste_fn, hud, polisher
         self.frontmost_app = frontmost_app or _frontmost_app_name
         self.caret_fn = caret_fn or (lambda: None)  # paste.char_before_caret in the app; unknown in tests
@@ -133,7 +134,7 @@ class Session:
             return
         self._wait_for_hold_release()
         status = self.paste_fn(self._join_prefix(text, app) + text, self.cfg.paste_restore_delay_ms)
-        self.hud.show("done" if status == "pasted" else "copied", text)
+        self.hud.show("done", text) if status == "pasted" else self.hud.show("copied", self.copied_reason())
         self._last_paste = (app, text, time.monotonic()) if status == "pasted" else None
         clip = history.save_clip(audio, sr) if self.cfg.save_clips else None
         history.append(raw, text, app, seconds, clip)
@@ -218,6 +219,7 @@ def build_app(cfg: config.Config):
     from .hotkey import KEYCODES, HoldDetector, Listener
     from .hud import Hud
     from .polish import Polisher
+    from .prompt import TextPrompt
 
     ENGINE_LABELS = {"parakeet": "Parakeet (fast, EN+ES)", "whisper": "Whisper turbo"}
     KEY_LABEL = {"right_option": "Right Option", "right_command": "Right Command", "right_control": "Right Control",
@@ -318,7 +320,8 @@ def build_app(cfg: config.Config):
                 threading.Thread(target=self._warm_polisher, args=(polisher,), daemon=True).start()
             self.session = Session(self.engine, Recorder(), self.vocab, self.cfg,
                                    paste.paste_text, self.hud,
-                                   polisher=polisher, caret_fn=paste.char_before_caret)
+                                   polisher=polisher, caret_fn=paste.char_before_caret,
+                                   copied_reason=paste.why_copied)
             keycode = KEYCODES.get(self.cfg.hotkey, KEYCODES["right_option"])
             detector = HoldDetector(self.session.on_start, self.session.on_stop, self.session.on_cancel, keycode)
             self.listener = Listener(detector)
@@ -497,24 +500,29 @@ def build_app(cfg: config.Config):
             if not last:
                 self._alert("MyFlow", "Nothing dictated yet.")
                 return
-            win = rumps.Window(message="Fix only the words MyFlow misheard. Rewording is not learned, mishearings are.",
-                               title="Fix last dictation", default_text=last["final"], ok="Save", cancel="Cancel",
-                               dimensions=(420, 120))
-            resp = with_keyboard(win.run)
-            if resp.clicked and self.session:
-                rules = self.session.fix_last(resp.text)
-                self._set_status(f"Learned {len(rules)} correction(s)" if rules else "Saved. No new rules.")
+            def save(text):
+                if self.session and text.strip():
+                    rules = self.session.fix_last(text)
+                    self._set_status(f"Learned {len(rules)} correction(s)" if rules else "Saved. No new rules.")
+
+            self._prompt = TextPrompt(title="Fix last dictation",
+                                      message="Fix only the words MyFlow misheard. Rewording is not learned, mishearings are.",
+                                      default=last["final"], ok="Save", on_submit=save)
+            self._prompt.show()
 
         def add_word(self, _):
-            win = rumps.Window(message="Word or phrase, exactly as it should be typed. Optional: heard form => Word",
-                               title="Add to dictionary", default_text="", ok="Add", cancel="Cancel",
-                               dimensions=(320, 24))
-            resp = with_keyboard(win.run)
-            if resp.clicked and resp.text.strip():
-                line = resp.text.strip()
+            def add(text):
+                line = text.strip()
+                if not line:
+                    return
                 with config.DICTIONARY_PATH.open("a") as f:
                     f.write(line + "\n")
                 self._watch_dictionary(None)
+
+            self._prompt = TextPrompt(title="Add to dictionary",
+                                      message="Word or phrase, exactly as it should be typed. Optional: heard form => Word",
+                                      default="", ok="Add", on_submit=add)
+            self._prompt.show()
 
         def open_dictionary(self, _):
             config.ensure_dirs()

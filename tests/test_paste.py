@@ -63,6 +63,7 @@ def test_paste_returns_copied_when_untrusted(monkeypatch):
 
 def test_paste_pasted_path_restores_clipboard(monkeypatch):
     monkeypatch.setattr(paste, "is_trusted", lambda: True)
+    monkeypatch.setattr(paste, "secure_input_enabled", lambda: False)
     sent = []
     monkeypatch.setattr(paste, "_send_cmd_v", lambda: sent.append(1) or True)
     _pb().clearContents()
@@ -85,6 +86,7 @@ def test_paste_falls_back_to_copied_when_event_post_fails(monkeypatch):
 def test_paste_returns_copied_in_secure_input(monkeypatch):
     monkeypatch.setattr(paste, "is_trusted", lambda: True)
     monkeypatch.setattr(paste, "secure_input_enabled", lambda: True)
+    monkeypatch.setattr(paste, "secure_input_holder", lambda: None)
     sent = []
     monkeypatch.setattr(paste, "_send_cmd_v", lambda: sent.append(1) or True)
     assert paste.paste_text("secret field", restore_delay_ms=10) == "copied"
@@ -206,3 +208,46 @@ def test_cmd_v_events_carry_the_apps_own_tag(monkeypatch):
     assert paste._send_cmd_v() is True
     assert len(posted) == 2
     assert all(Quartz.CGEventGetIntegerValueField(ev, Quartz.kCGEventSourceUserData) == OWN_EVENT_TAG for ev in posted)
+
+
+# ---- secure input only blocks pasting into the app that holds it (2026-11-18) -------------------------------
+# Chrome leaked secure keyboard input for a whole day (a password field's grant never released) and every paste
+# into Claude fell back to "copied". Secure input only matters when the front app is the one holding it.
+
+def _secure(monkeypatch, enabled, holder, front, send):
+    monkeypatch.setattr(paste, "is_trusted", lambda: True)
+    monkeypatch.setattr(paste, "secure_input_enabled", lambda: enabled)
+    monkeypatch.setattr(paste, "secure_input_holder", lambda: holder)
+    monkeypatch.setattr(paste, "_frontmost", lambda: front)
+    monkeypatch.setattr(paste, "_modifier_held", lambda: False)
+    monkeypatch.setattr(paste, "_send_cmd_v", lambda: send.append(1) or True)
+
+
+def test_secure_input_held_by_another_app_does_not_block_the_paste(monkeypatch):
+    sent = []
+    _secure(monkeypatch, True, (664, "Google Chrome"), (9000, "Claude"), sent)
+    assert paste.paste_text("hello", restore_delay_ms=10) == "pasted" and sent == [1]
+
+
+def test_secure_input_held_by_the_front_app_blocks_the_paste_and_says_so(monkeypatch):
+    sent = []
+    _secure(monkeypatch, True, (664, "Google Chrome"), (664, "Google Chrome"), sent)
+    assert paste.paste_text("hello", restore_delay_ms=10) == "copied" and sent == []
+    assert "Google Chrome" in paste.why_copied() and "secure" in paste.why_copied().lower()
+
+
+def test_secure_input_with_an_unknown_holder_still_blocks(monkeypatch):
+    sent = []
+    _secure(monkeypatch, True, None, (9000, "Claude"), sent)
+    assert paste.paste_text("hello", restore_delay_ms=10) == "copied" and sent == []
+
+
+def test_why_copied_names_missing_accessibility(monkeypatch):
+    monkeypatch.setattr(paste, "is_trusted", lambda: False)
+    assert paste.paste_text("hello", restore_delay_ms=10) == "copied"
+    assert "Accessibility" in paste.why_copied()
+
+
+def test_secure_input_holder_probe_runs():
+    h = paste.secure_input_holder()
+    assert h is None or (isinstance(h[0], int) and isinstance(h[1], str))

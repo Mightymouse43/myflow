@@ -83,7 +83,7 @@ def test_pill_fits_short_messages_for_errors_and_blocked_pastes():
     assert pill_width("error", text_px=1) == MIN_W
     assert MIN_W < pill_width("error", text_px=100) < MAX_W
     assert shown_text("error", "Didn't catch that") == "Didn't catch that"
-    assert shown_text("copied", "the whole dictation") == "Copied, paste blocked"
+    assert shown_text("copied", "") == "Copied, paste blocked"   # the copied pill carries the reason, never the text
 
 
 def test_pill_sits_centred_just_above_the_bottom_of_the_visible_screen():
@@ -141,3 +141,8 @@ def test_pick_screen_uses_the_nearest_screen_when_the_point_is_off_every_screen(
     frames = [((0.0, 0.0), (1512.0, 982.0)), ((-1920.0, 0.0), (1920.0, 1080.0))]
     assert pick_screen((-960.0, 1096.0), frames) == 1      # just above the Sceptre's top edge
     assert pick_screen((2000.0, 500.0), frames) == 0       # off to the right of the laptop
+
+
+def test_copied_pill_shows_the_reason_when_there_is_one():
+    assert shown_text("copied", "") == "Copied, paste blocked"
+    assert shown_text("copied", "Google Chrome holds secure keyboard input") == "Google Chrome holds secure keyboard input"

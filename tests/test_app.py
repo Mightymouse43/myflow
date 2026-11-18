@@ -131,7 +131,7 @@ def test_copied_status_shows_copied_hud(tmp_voz):
     s = Session(engine=FakeEngine(["hello there friend"]), recorder=FakeRecorder([SPEECH]), vocab=Vocab.from_text(""),
                 cfg=Config(), paste_fn=lambda t, d: "copied", hud=hud, frontmost_app=lambda: "X")
     s.on_start(); s.on_stop(); assert s.wait_idle(5)
-    assert hud.calls[-1] == ("copied", "Hello there friend.")
+    assert hud.calls[-1] == ("copied", "")           # the pill shows why (paste.why_copied in the app), not the text
 
 
 def test_session_records_history_and_clip(tmp_voz):
@@ -315,3 +315,12 @@ def test_modal_hands_focus_back_even_when_the_window_raises():
     with pytest.raises(RuntimeError):
         with_keyboard(boom, app=app, frontmost=lambda: prev)
     assert prev.activated == 1
+
+
+def test_copied_hud_carries_the_reason(tmp_voz):
+    hud = FakeHud()
+    s = Session(engine=FakeEngine(["hello there friend"]), recorder=FakeRecorder([SPEECH]), vocab=Vocab.from_text(""),
+                cfg=Config(), paste_fn=lambda t, d: "copied", hud=hud, frontmost_app=lambda: "X",
+                copied_reason=lambda: "Google Chrome holds secure keyboard input")
+    s.on_start(); s.on_stop(); assert s.wait_idle(5)
+    assert hud.calls[-1] == ("copied", "Google Chrome holds secure keyboard input")

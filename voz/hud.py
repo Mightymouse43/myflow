@@ -86,7 +86,7 @@ def shown_text(state: str, text: str) -> str:
     if state in _COMPACT:
         return ""
     if state == "copied":
-        return "Copied, paste blocked"
+        return text.replace("\n", " ") or "Copied, paste blocked"
     return text.replace("\n", " ")
 
 

@@ -15,7 +15,7 @@ MyFlow is a free, local, hold-to-talk dictation app for Apple Silicon Macs (code
 ## Gotchas we already hit (save yourself the hour)
 
 * **Never rebuild the launcher casually.** `scripts/build_app.sh` only replaces `~/Applications/MyFlow.app` when the launcher, plist, python path or icon changed, because a new ad-hoc signature makes macOS drop the Accessibility and Microphone grants. Python edits need no rebuild: `launchctl kickstart -k gui/$(id -u)/com.carlosramirez.myflow` restarts the app. If the grants ever go stale (ticked in Settings but not working), `tccutil reset Accessibility com.carlosramirez.myflow` and `tccutil reset Microphone com.carlosramirez.myflow`, restart, re-tick.
-* **The pill says "Copied" instead of pasting:** Accessibility is not granted, or a password field or Terminal secure input has the keyboard. The text is on the clipboard.
+* **The pill says "Copied" instead of pasting:** Accessibility is not granted, or posting Cmd+V failed. The text is on the clipboard. Secure keyboard input is NOT a reason (see below).
 * **Slow model download:** set `HF_HUB_DISABLE_XET=1` (the installer already does) and let it run; it resumes. A Hugging Face token speeds it up but is not required.
 * **Mic:** capture goes through CoreAudio AudioQueue via ctypes (`voz/audio.py`). PortAudio/sounddevice deadlocks on macOS 26 at stream stop; do not bring it back for capture. A 3 s watchdog exits the process if a stop hangs and launchd restarts it.
 * **MLX and threads:** unevaluated MLX arrays belong to the thread that created them. Any engine must `mx.eval` everything it builds at load time (`ParakeetEngine.load` does), or transcribing on the worker thread fails with "There is no Stream(cpu, N) in current thread".
@@ -23,7 +23,7 @@ MyFlow is a free, local, hold-to-talk dictation app for Apple Silicon Macs (code
 * **The app's own Cmd+V passes through the key tap too.** `paste._send_cmd_v` stamps its events with `hotkey.OWN_EVENT_TAG` (kCGEventSourceUserData) and the tap skips them; before that, a paste landing while the next dictation was already held read as a chord and cancelled it. The session also waits for the hotkey to come up before pasting (`HOLD_WAIT_S`).
 * **The first take after a pause took 10 s:** macOS had paged the 1.6 GB of weights out to swap. `voz/residency.py` wires them after load (`mx.set_wired_limit`, macOS 15+) and clears MLX's scratch cache after every take, so idle MyFlow holds about 1.6 GB instead of 3.5 GB and never has to page the model back. `keep_model_resident = false` in config.toml turns the wiring off on a RAM-starved Mac.
 * **Text input never goes through an NSAlert.** `voz/prompt.py` is a non-activating floating NSPanel that becomes key on its own (like Spotlight); use it for anything the user types. A rumps Window (NSAlert) only takes keys once the app is active, and a menu bar app cannot always activate itself: with Chrome in front holding secure input, no activation call worked (2026-11-18). Plain alerts still go through `app.with_keyboard` (best effort; buttons work with the mouse regardless).
-* **Secure keyboard input is scoped, not global.** Chrome leaked the grant from a password field for a whole day and every paste into Claude fell back to the clipboard. `paste.secure_input_blocks` only blocks when the front app is the holder (`ioreg -c IOHIDSystem -l` carries `kCGSSessionSecureInputPID`); the Copied pill and `voz doctor` name the holder. The user's remedy for a stuck holder: click a normal text box in that app, or quit it.
+* **Secure keyboard input never blocks the paste.** It hides keystrokes from other processes; it does not drop a posted Cmd+V. Chrome kept a password field's grant for a whole day (2026-11-18) and a gate that refused to paste into the holder sent every Chrome paste to the clipboard for nothing: the same Cmd+V pasted fine once attempted. `paste.secure_input_note` only logs the holder (`ioreg -c IOHIDSystem -l` carries `kCGSSessionSecureInputPID`) and `voz doctor` names it. Do not bring the gate back.
 * **Globe/Fn as the hotkey** also needs System Settings > Keyboard > "Press globe key to" = Do Nothing.
 * **Diagnosing a hang:** `sample <pid> 2` and look for `__psynch_mutexwait`. Logs: `~/.voz/voz.log`, `~/.voz/launchd.err.log`.
 
@@ -36,7 +36,7 @@ MyFlow is a free, local, hold-to-talk dictation app for Apple Silicon Macs (code
 | `voz/engines.py` | Whisper (mlx-whisper) and Parakeet (parakeet-mlx) behind one `transcribe()` |
 | `voz/textproc.py` | Pure text: fillers, stutters, "new line", casing, punctuation, and `join_prefix` (the space between dictations) |
 | `voz/vocab.py` | Dictionary, fuzzy matching, learning from "Fix last dictation" |
-| `voz/paste.py` | Clipboard-safe Cmd+V, secure input check, reading the character before the caret through Accessibility |
+| `voz/paste.py` | Clipboard-safe Cmd+V, secure input holder (log only), reading the character before the caret through Accessibility |
 | `voz/hud.py` | The floating pill with live voice bars, anchored to the window you dictate into |
 | `voz/hotkey.py` | Quartz event tap for the hold / double-tap / cancel gestures |
 | `voz/polish.py` | Optional local LLM cleanup (mlx-lm) |

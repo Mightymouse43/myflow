@@ -28,9 +28,9 @@ def secure_input_line(enabled: bool, holder: tuple[int, str] | None) -> str:
     if not enabled:
         return "Secure keyboard input: off"
     if holder is None:
-        return "Secure keyboard input: ON, holder unknown (pastes blocked until it is released)"
-    return (f"Secure keyboard input: ON, held by {holder[1]} (pid {holder[0]}); pastes into it are blocked, "
-            f"other apps paste normally. Stuck? Click a normal text box in {holder[1]} or quit it.")
+        return "Secure keyboard input: ON, holder unknown. MyFlow still pastes; other tools that watch keys may not."
+    return (f"Secure keyboard input: ON, held by {holder[1]} (pid {holder[0]}). MyFlow still pastes into it; "
+            f"a stuck grant is released by clicking a normal text box in {holder[1]} or quitting it.")
 
 
 def report() -> str:

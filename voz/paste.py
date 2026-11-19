@@ -43,7 +43,8 @@ def request_trust() -> bool:
 
 
 def secure_input_enabled() -> bool:
-    """True while a password field (or Terminal secure input) owns the keyboard; synthetic Cmd+V is dropped then."""
+    """True while a password field (or Terminal secure input) owns the keyboard. Reported by `voz doctor` only:
+    a synthetic Cmd+V still lands, even in the app holding it (verified in Chrome, 2026-11-18)."""
     global _carbon
     try:
         if _carbon is None:
@@ -76,21 +77,19 @@ def secure_input_holder() -> tuple[int, str] | None:
     return (pid, str(app.localizedName()) if app is not None else f"pid {pid}")
 
 
-def secure_input_blocks() -> str | None:
-    """Why secure keyboard input stops this paste, or None when it does not.
+def secure_input_note() -> None:
+    """Log who holds secure keyboard input, for the record. It never stops the paste.
 
-    Secure input only matters when the app in front is the one holding it (you are in its password field).
-    Chrome once kept the grant for a whole day after a password field and every paste into Claude fell back
-    to the clipboard (2026-11-18); a holder that is not in front is ignored."""
+    Secure input hides keystrokes from other processes; it does not drop a synthetic Cmd+V. The gate that
+    refused to paste into the holder (2026-11-18, morning) sent every Chrome paste to the clipboard for no
+    reason: Chrome kept a password field's grant all day and the same Cmd+V pasted fine once attempted."""
     if not secure_input_enabled():
-        return None
-    holder, front = secure_input_holder(), _frontmost()
+        return
+    holder = secure_input_holder()
     if holder is None:
-        return "Secure keyboard input is on (unknown app), paste blocked"
-    if front is None or holder[0] == front[0]:
-        return f"{holder[1]} holds secure keyboard input (a password field?), paste blocked"
-    log.info("secure input held by %s (pid %d), not the front app; pasting anyway", holder[1], holder[0])
-    return None
+        log.info("secure input is on (holder unknown); pasting anyway")
+    else:
+        log.info("secure input held by %s (pid %d); pasting anyway", holder[1], holder[0])
 
 
 def _modifier_held() -> bool:
@@ -167,11 +166,7 @@ def paste_text(text: str, restore_delay_ms: int = 400) -> Literal["pasted", "cop
         _why = "Accessibility not granted, text left on the clipboard"
         log.warning(_why)
         return "copied"
-    reason = secure_input_blocks()
-    if reason:
-        _why = reason
-        log.info("%s; text left on the clipboard", reason)
-        return "copied"
+    secure_input_note()
     _wait_for_modifiers_release()
     if not _send_cmd_v():
         _why = "Could not post Cmd+V, text left on the clipboard"
